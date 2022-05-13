@@ -1,0 +1,39 @@
+{
+  "name": "fission-nodejs-runtime",
+  "version": "0.1.0",
+  "author": "Soam Vasani",
+  "contributors": [
+    {
+      "name": "Soam Vasani",
+      "email": "soamvasani+1@gmail.com"
+    },
+    {
+      "name": "Gary Yeap",
+      "email": "contact@garyyeap.com"
+    }
+  ],
+  "description": "NodeJS run container for the fission framework",
+  "engines": {
+    "node": ">= 16.0.0"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.0.4",
+    "@opentelemetry/exporter-jaeger": "^1.1.1",
+    "@opentelemetry/instrumentation": "^0.28.0",
+    "@opentelemetry/instrumentation-express": "^0.28.0",
+    "@opentelemetry/instrumentation-http": "^0.28.0",
+    "@opentelemetry/sdk-trace-node": "^1.2.0",
+    "@opentelemetry/propagator-b3": "^1.2.0",
+    "@opentelemetry/tracing": "^0.18.0",
+    "axios": "0.26.1",
+    "co": "~4.6.0",
+    "express": ">=4.0.0",
+    "minimist": "*",
+    "morgan": "*",
+    "mz": "~2.7.0",
+    "request": "^2.81.0",
+    "request-promise-native": "^1.0.3",
+    "underscore": ">=1.8.3",
+    "ws": "^7.5.5"
+  }
+}
