@@ -1,15 +1,11 @@
 "use strict";
-const {setupTracing} = require('./lib/tracer')
 const ce = require('./lib/ce');
 const helper = require('./lib/helper');
-
 const bodyParser = require('body-parser');
 const process = require("process");
-const express = require("express");
-const app = express();
 const morgan = require("morgan");
-
-
+const opentelemetry = require('@opentelemetry/api');
+const {setupTracer} = require('./lib/tracer')
 
 
 // To catch unhandled exceptions thrown by user code async callbacks,
@@ -23,10 +19,15 @@ const podName = process.env.HOSTNAME || ""
 const serviceNamespace = process.env.SERVICE_NAMESPACE || ""
 let serviceName = podName.substring(0, podName.lastIndexOf("-"));
 serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"))
+serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"))
 const functionName = process.env.FUNC_NAME || serviceName;
 const bodySizeLimit = Number(process.env.REQ_MB_LIMIT || '1');
 const funcPort = Number(process.env.FUNC_PORT || '8080');
-const {tracer, api} = setupTracing([serviceName, serviceNamespace].join('.'));
+const tracer = setupTracer([serviceName, serviceNamespace].join('.'));
+
+//require express must be called AFTER tracer was setup!!!!!!
+const express = require("express");
+const app = express();
 
 // User function.  Starts out undefined.
 let userFunction;
@@ -43,7 +44,6 @@ const loadFunction = (modulepath, funcname) => {
         console.log(
             `user code loaded in ${elapsed[0]}sec ${elapsed[1] / 1000000}ms`
         );
-        // console.log(userFunction)
         return userFunction;
     } catch (e) {
         console.error(`user code load error: ${e}`);
@@ -59,12 +59,10 @@ const isPromise = (promise) => {
     return typeof promise.then == "function"
 }
 
-
 // Request logger
 if (process.env["KYMA_INTERNAL_LOGGER_ENABLED"]) {
     app.use(morgan("combined"));
 }
-
 
 const bodParserOptions = {
     type: req => !req.is('multipart/*'),
@@ -100,7 +98,7 @@ app.all("*", (req, res) => {
             'function-name': functionName,
             'runtime': process.env.FUNC_RUNTIME,
             'namespace': serviceNamespace,
-            'opentelemetry': {api,tracer, context:api.context.active()}
+            'tracer': tracer
         };
     
         const callback = (status, body, headers) => {
@@ -114,11 +112,17 @@ app.all("*", (req, res) => {
             res.status(status).send(body);
             console.log(`${status}: ${body}`)
         };
-    
+
+        const currentSpan = opentelemetry.trace.getSpan(opentelemetry.context.active());
+        const ctx = opentelemetry.trace.setSpan(
+            opentelemetry.context.active(),
+            currentSpan
+          );
+        const span = tracer.startSpan('userFunction', undefined, ctx);  
+
         try {
             // Execute the user function
             const out = userFunction(event, context, callback);
-            console.log("ouT:",out)
             if (out){
                 if(isPromise(out)){
                     Promise.resolve(out)
@@ -136,6 +140,9 @@ app.all("*", (req, res) => {
             let status = err.status || 500
             let body = err.msg || "Internal server error"
             callback(status, body);
+            span.addEvent(body)
+        } finally {
+            span.end()
         }
     }
   
