@@ -55,6 +55,10 @@ const isFunction = (func) => {
     return func && func.constructor && func.call && func.apply;
 };
 
+const isPromise = (promise) => {
+    return typeof promise.then == "function"
+}
+
 
 // Request logger
 if (process.env["KYMA_INTERNAL_LOGGER_ENABLED"]) {
@@ -100,6 +104,7 @@ app.all("*", (req, res) => {
         };
     
         const callback = (status, body, headers) => {
+            console.log("Calling back")
             if (!status) return;
             if (headers) {
                 for (let name of Object.keys(headers)) {
@@ -107,15 +112,25 @@ app.all("*", (req, res) => {
                 }
             }
             res.status(status).send(body);
+            console.log(`${status}: ${body}`)
         };
     
         try {
             // Execute the user function
             const out = userFunction(event, context, callback);
-
-            //if user function returns a defined object return it in the response
-            if(out){
-                callback(200, out)
+            console.log("ouT:",out)
+            if (out){
+                if(isPromise(out)){
+                    Promise.resolve(out)
+                    .then(result => {
+                        callback(200, result);
+                    })
+                    .catch((err) => {
+                        callback(500, err);
+                    });
+                } else {
+                    callback(200, out)
+                }
             }
         } catch (err) {
             let status = err.status || 500
