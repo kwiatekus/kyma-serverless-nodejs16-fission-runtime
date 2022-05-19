@@ -1,5 +1,5 @@
 "use strict";
-const {setupTracing} = require('./lib/tracer')
+// const {setupTracing} = require('./lib/tracer')
 const ce = require('./lib/ce');
 const helper = require('./lib/helper');
 
@@ -8,7 +8,7 @@ const process = require("process");
 const express = require("express");
 const app = express();
 const morgan = require("morgan");
-
+const {setupTracing} = require('./lib/auto-tracing');
 
 
 
@@ -23,10 +23,12 @@ const podName = process.env.HOSTNAME || ""
 const serviceNamespace = process.env.SERVICE_NAMESPACE || ""
 let serviceName = podName.substring(0, podName.lastIndexOf("-"));
 serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"))
+serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"))
 const functionName = process.env.FUNC_NAME || serviceName;
 const bodySizeLimit = Number(process.env.REQ_MB_LIMIT || '1');
 const funcPort = Number(process.env.FUNC_PORT || '8080');
-const {tracer, api} = setupTracing([serviceName, serviceNamespace].join('.'));
+// const {tracer, api} = setupTracing([serviceName, serviceNamespace].join('.'));
+setupTracing([serviceName, serviceNamespace].join('.'));
 
 // User function.  Starts out undefined.
 let userFunction;
@@ -100,7 +102,7 @@ app.all("*", (req, res) => {
             'function-name': functionName,
             'runtime': process.env.FUNC_RUNTIME,
             'namespace': serviceNamespace,
-            'opentelemetry': {api,tracer, context:api.context.active()}
+            // 'opentelemetry': {api,tracer, context:api.context.active()}
         };
     
         const callback = (status, body, headers) => {

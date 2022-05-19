@@ -1,6 +1,6 @@
 
 IMAGE_DOMAIN=kwiatekus
-IMAGE_TAG=local
+IMAGE_TAG=auto-tracer-node
 IMAGE_FULL_NAME=${IMAGE_DOMAIN}/kyma-serverless-nodejs16-fission-runtime:${IMAGE_TAG}
 
 build:
