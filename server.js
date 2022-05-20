@@ -5,6 +5,8 @@ const bodyParser = require('body-parser');
 const process = require("process");
 const morgan = require("morgan");
 const opentelemetry = require('@opentelemetry/api');
+const { SpanStatusCode } = require( "@opentelemetry/api/build/src/trace/status");
+
 const {setupTracer} = require('./lib/tracer')
 
 
@@ -117,7 +119,9 @@ app.all("*", (req, res) => {
         const ctx = opentelemetry.trace.setSpan(
             opentelemetry.context.active(),
             currentSpan
-          );
+        );
+
+        console.log("Creating span for userFunction execution")  
         const span = tracer.startSpan('userFunction', undefined, ctx);  
 
         try {
@@ -127,10 +131,16 @@ app.all("*", (req, res) => {
                 if(isPromise(out)){
                     Promise.resolve(out)
                     .then(result => {
-                        callback(200, result);
+                        if(result){
+                            callback(200, result);
+                        }
                     })
                     .catch((err) => {
-                        callback(500, err);
+                        console.error(err)
+                        const errTxt = resolveErrorMsg(err)
+                        console.error(errTxt)
+                        callback(500, errTxt);
+                        span.setStatus({code: SpanStatusCode.ERROR, message: errTxt})
                     });
                 } else {
                     callback(200, out)
@@ -138,9 +148,9 @@ app.all("*", (req, res) => {
             }
         } catch (err) {
             let status = err.status || 500
-            let body = err.msg || "Internal server error"
-            callback(status, body);
-            span.addEvent(body)
+            let errText = resolveErrorMsg(err);
+            callback(status, errText);
+            span.setStatus({code: SpanStatusCode.ERROR, message: errText})
         } finally {
             span.end()
         }
@@ -158,4 +168,14 @@ if (isFunction(fn.main)) {
     console.error("Content loaded is not a function", fn)
 }
 
+
+function resolveErrorMsg(err){
+    let errText
+    if (typeof err == "string") {
+        errText = err
+    } else {
+        errText = err.msg || "Internal server error"
+    }
+    return errText
+}
 
