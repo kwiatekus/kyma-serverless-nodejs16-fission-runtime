@@ -4,10 +4,8 @@ const helper = require('./lib/helper');
 const bodyParser = require('body-parser');
 const process = require("process");
 const morgan = require("morgan");
-const opentelemetry = require('@opentelemetry/api');
-const { SpanStatusCode } = require("@opentelemetry/api/build/src/trace/status");
 
-const { setupTracer } = require('./lib/tracer')
+const { setupTracer, startNewSpan } = require('./lib/tracer')
 
 
 // To catch unhandled exceptions thrown by user code async callbacks,
@@ -16,7 +14,6 @@ process.on("uncaughtException", (err) => {
     console.error(`Caught exception: ${err}`);
 });
 
-const timeout = Number(process.env.FUNC_TIMEOUT || '5');
 const podName = process.env.HOSTNAME || ""
 const serviceNamespace = process.env.SERVICE_NAMESPACE || ""
 let serviceName = podName.substring(0, podName.lastIndexOf("-"));
@@ -29,8 +26,8 @@ const tracer = setupTracer([serviceName, serviceNamespace].join('.'));
 
 //require express must be called AFTER tracer was setup!!!!!!
 const express = require("express");
-const { time } = require('console');
 const app = express();
+
 
 // User function.  Starts out undefined.
 let userFunction;
@@ -54,18 +51,11 @@ const loadFunction = (modulepath, funcname) => {
     }
 };
 
-const isFunction = (func) => {
-    return func && func.constructor && func.call && func.apply;
-};
-
-const isPromise = (promise) => {
-    return typeof promise.then == "function"
-}
-
 // Request logger
 if (process.env["KYMA_INTERNAL_LOGGER_ENABLED"]) {
     app.use(morgan("combined"));
 }
+
 
 const bodParserOptions = {
     type: req => !req.is('multipart/*'),
@@ -74,6 +64,9 @@ const bodParserOptions = {
 app.use(bodyParser.raw(bodParserOptions));
 app.use(bodyParser.json({ limit: `${bodySizeLimit}mb` }));
 app.use(bodyParser.urlencoded({ limit: `${bodySizeLimit}mb`, extended: true }));
+
+
+app.use(helper.handleTimeOut);
 
 app.get("/healthz", (req, res) => {
     res.status(200).send("")
@@ -90,8 +83,7 @@ app.all("*", (req, res) => {
     } else {
 
         if (!userFunction) {
-            // console.log(userFunction)
-            res.status(500).send("Generic container: no requests supported");
+            res.status(500).send("User function not loaded");
             return;
         }
 
@@ -112,22 +104,15 @@ app.all("*", (req, res) => {
                 }
             }
             res.status(status).send(body);
-            console.log(`${status}: ${body}`)
         };
 
-
-        const currentSpan = opentelemetry.trace.getSpan(opentelemetry.context.active());
-        const ctx = opentelemetry.trace.setSpan(
-            opentelemetry.context.active(),
-            currentSpan
-        );
-        const span = tracer.startSpan('userFunction', undefined, ctx);
+        const span = startNewSpan('userFunction', tracer);
 
         try {
             // Execute the user function
             const out = userFunction(event, context, callback);
             if (out) {
-                if (isPromise(out)) {
+                if (helper.isPromise(out)) {
                     // Promise.resolve(out)
                     out.then(result => {
                         if (result) {
@@ -135,7 +120,7 @@ app.all("*", (req, res) => {
                         }
                     })
                     .catch((err) => {
-                        handleError(500, err, span, callback)
+                        helper.handleError(500, err, span, callback)
                     })
                     .finally(()=>{
                         span.end();
@@ -145,42 +130,22 @@ app.all("*", (req, res) => {
                 }
             }
         } catch (err) {
-            handleError(err.status || 500, err, span, callback)
+            helper.handleError(err.status || 500, err, span, callback)
         } finally {
             span.end();
         }
     }
 });
 
+
 const server = app.listen(funcPort);
-// server.setTimeout(timeout*1000);
-server.setTimeout(5*1000);
 
 helper.configureGracefulShutdown(server);
 
+
 const fn = loadFunction("./function/handler", "");
-if (isFunction(fn.main)) {
+if (helper.isFunction(fn.main)) {
     userFunction = fn.main
 } else {
     console.error("Content loaded is not a function", fn)
 }
-
-
-function handleError(status, err, span, callback) {
-    const errTxt = resolveErrorMsg(err);
-    console.error(errTxt);
-    span.setStatus({ code: SpanStatusCode.ERROR, message: errTxt });
-    span.setAttribute("error", errTxt);
-    callback(status, errTxt);
-}
-
-function resolveErrorMsg(err) {
-    let errText
-    if (typeof err == "string") {
-        errText = err
-    } else {
-        errText = err.msg || "Internal server error"
-    }
-    return errText
-}
-
