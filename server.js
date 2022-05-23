@@ -5,9 +5,9 @@ const bodyParser = require('body-parser');
 const process = require("process");
 const morgan = require("morgan");
 const opentelemetry = require('@opentelemetry/api');
-const { SpanStatusCode } = require( "@opentelemetry/api/build/src/trace/status");
+const { SpanStatusCode } = require("@opentelemetry/api/build/src/trace/status");
 
-const {setupTracer} = require('./lib/tracer')
+const { setupTracer } = require('./lib/tracer')
 
 
 // To catch unhandled exceptions thrown by user code async callbacks,
@@ -16,7 +16,7 @@ process.on("uncaughtException", (err) => {
     console.error(`Caught exception: ${err}`);
 });
 
-const timeout = Number(process.env.FUNC_TIMEOUT || '180');
+const timeout = Number(process.env.FUNC_TIMEOUT || '5');
 const podName = process.env.HOSTNAME || ""
 const serviceNamespace = process.env.SERVICE_NAMESPACE || ""
 let serviceName = podName.substring(0, podName.lastIndexOf("-"));
@@ -29,6 +29,7 @@ const tracer = setupTracer([serviceName, serviceNamespace].join('.'));
 
 //require express must be called AFTER tracer was setup!!!!!!
 const express = require("express");
+const { time } = require('console');
 const app = express();
 
 // User function.  Starts out undefined.
@@ -71,8 +72,8 @@ const bodParserOptions = {
     limit: `${bodySizeLimit}mb`,
 };
 app.use(bodyParser.raw(bodParserOptions));
-app.use(bodyParser.json({limit: `${bodySizeLimit}mb`}));
-app.use(bodyParser.urlencoded({limit: `${bodySizeLimit}mb`, extended: true}));
+app.use(bodyParser.json({ limit: `${bodySizeLimit}mb` }));
+app.use(bodyParser.urlencoded({ limit: `${bodySizeLimit}mb`, extended: true }));
 
 app.get("/healthz", (req, res) => {
     res.status(200).send("")
@@ -93,18 +94,17 @@ app.all("*", (req, res) => {
             res.status(500).send("Generic container: no requests supported");
             return;
         }
-    
+
         const event = ce.buildEvent(req, res);
-    
+
         const context = {
             'function-name': functionName,
             'runtime': process.env.FUNC_RUNTIME,
             'namespace': serviceNamespace,
             'tracer': tracer
         };
-    
+
         const callback = (status, body, headers) => {
-            console.log("Calling back")
             if (!status) return;
             if (headers) {
                 for (let name of Object.keys(headers)) {
@@ -115,50 +115,47 @@ app.all("*", (req, res) => {
             console.log(`${status}: ${body}`)
         };
 
+
         const currentSpan = opentelemetry.trace.getSpan(opentelemetry.context.active());
         const ctx = opentelemetry.trace.setSpan(
             opentelemetry.context.active(),
             currentSpan
         );
-
-        console.log("Creating span for userFunction execution")  
-        const span = tracer.startSpan('userFunction', undefined, ctx);  
+        const span = tracer.startSpan('userFunction', undefined, ctx);
 
         try {
             // Execute the user function
             const out = userFunction(event, context, callback);
-            if (out){
-                if(isPromise(out)){
-                    Promise.resolve(out)
-                    .then(result => {
-                        if(result){
+            if (out) {
+                if (isPromise(out)) {
+                    // Promise.resolve(out)
+                    out.then(result => {
+                        if (result) {
                             callback(200, result);
                         }
                     })
                     .catch((err) => {
-                        console.error(err)
-                        const errTxt = resolveErrorMsg(err)
-                        console.error(errTxt)
-                        callback(500, errTxt);
-                        span.setStatus({code: SpanStatusCode.ERROR, message: errTxt})
-                    });
+                        handleError(500, err, span, callback)
+                    })
+                    .finally(()=>{
+                        span.end();
+                    })
                 } else {
                     callback(200, out)
                 }
             }
         } catch (err) {
-            let status = err.status || 500
-            let errText = resolveErrorMsg(err);
-            callback(status, errText);
-            span.setStatus({code: SpanStatusCode.ERROR, message: errText})
+            handleError(err.status || 500, err, span, callback)
         } finally {
-            span.end()
+            span.end();
         }
     }
-  
 });
 
 const server = app.listen(funcPort);
+// server.setTimeout(timeout*1000);
+server.setTimeout(5*1000);
+
 helper.configureGracefulShutdown(server);
 
 const fn = loadFunction("./function/handler", "");
@@ -169,7 +166,15 @@ if (isFunction(fn.main)) {
 }
 
 
-function resolveErrorMsg(err){
+function handleError(status, err, span, callback) {
+    const errTxt = resolveErrorMsg(err);
+    console.error(errTxt);
+    span.setStatus({ code: SpanStatusCode.ERROR, message: errTxt });
+    span.setAttribute("error", errTxt);
+    callback(status, errTxt);
+}
+
+function resolveErrorMsg(err) {
     let errText
     if (typeof err == "string") {
         errText = err
