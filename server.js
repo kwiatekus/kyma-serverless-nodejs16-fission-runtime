@@ -14,12 +14,12 @@ process.on("uncaughtException", (err) => {
     console.error(`Caught exception: ${err}`);
 });
 
-const podName = process.env.HOSTNAME || ""
-const serviceNamespace = process.env.SERVICE_NAMESPACE || ""
+const podName = process.env.HOSTNAME || "";
+const serviceNamespace = process.env.SERVICE_NAMESPACE || "";
 let serviceName = podName.substring(0, podName.lastIndexOf("-"));
-serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"))
-serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"))
-const functionName = process.env.FUNC_NAME || serviceName;
+serviceName = serviceName.substring(0, serviceName.lastIndexOf("-"));
+const defaultFunctioneName = serviceName.substring(0, serviceName.lastIndexOf("-"));
+const functionName = process.env.FUNC_NAME || defaultFunctioneName;
 const bodySizeLimit = Number(process.env.REQ_MB_LIMIT || '1');
 const funcPort = Number(process.env.FUNC_PORT || '8080');
 const tracer = setupTracer([serviceName, serviceNamespace].join('.'));
@@ -87,7 +87,7 @@ app.all("*", (req, res) => {
             return;
         }
 
-        const event = ce.buildEvent(req, res);
+        const event = ce.buildEvent(req, res, tracer);
 
         const context = {
             'function-name': functionName,
@@ -113,7 +113,6 @@ app.all("*", (req, res) => {
             const out = userFunction(event, context, callback);
             if (out) {
                 if (helper.isPromise(out)) {
-                    // Promise.resolve(out)
                     out.then(result => {
                         if (result) {
                             callback(200, result);
